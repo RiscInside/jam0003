@@ -1,4 +1,7 @@
-import gleam/option.{None, Option}
+import gleam/option
+import gleam/result
+import gleam/map
+import gleam/list
 import lang/ast
 
 pub type Type {
@@ -15,17 +18,49 @@ pub type TypeAdapter(old_annotation_type, new_annotation_type) {
   )
 }
 
+pub type TypeMapping =
+  List(map.Map(String, Type))
+
+fn lookup_variable_type(mapping: TypeMapping, name: String) -> Type {
+  mapping
+  |> list.find(map.has_key(_, name))
+  |> result.then(map.get(_, name))
+  |> result.unwrap(InvalidTypeMarker)
+}
+
+fn push_variable_scope(mapping: TypeMapping) -> TypeMapping {
+  [map.from_list([]), ..mapping]
+}
+
+fn declare_variable_type(
+  mapping: TypeMapping,
+  name: String,
+  ty: Type,
+) -> TypeMapping {
+  case mapping {
+    [cur_scope, ..other_scopes] -> [
+      cur_scope
+      |> map.insert(name, ty),
+      ..other_scopes
+    ]
+    [] ->
+      push_variable_scope([])
+      |> declare_variable_type(name, ty)
+  }
+}
+
 pub fn typecheck_expr(
   adapter: TypeAdapter(old_annotation_type, new_annotation_type),
   expr: ast.Expr(old_annotation_type),
-  constraint: Option(Type),
+  constraint: option.Option(Type),
+  mapping: TypeMapping,
 ) -> ast.Expr(new_annotation_type) {
   let ast.Expr(old_annotation, old_data) = expr
-  let augment_with_type = fn(
-    new_data: ast.ExprData(new_annotation_type),
-    inferred_type: Type,
-  ) {
+  let augment_with_type = fn(new_data, inferred_type) {
     ast.Expr(adapter.encode_type(old_annotation, inferred_type), new_data)
+  }
+  let typecheck_wrapper = fn(expr, constraint) {
+    typecheck_expr(adapter, expr, constraint, mapping)
   }
   case old_data {
     ast.IntegerLiteral(val) ->
@@ -38,7 +73,7 @@ pub fn typecheck_expr(
       augment_with_type(ast.StringLiteral(val), StringType)
 
     ast.UnOpExpr(op, child) -> {
-      let new_child = typecheck_expr(adapter, child, constraint)
+      let new_child = typecheck_wrapper(child, option.None)
       let child_type =
         new_child.annotation
         |> adapter.decode_type()
@@ -61,8 +96,8 @@ pub fn typecheck_expr(
     }
 
     ast.BinOpExpr(op, lhs, rhs) -> {
-      let new_lhs = typecheck_expr(adapter, lhs, None)
-      let new_rhs = typecheck_expr(adapter, rhs, None)
+      let new_lhs = typecheck_wrapper(lhs, option.None)
+      let new_rhs = typecheck_wrapper(rhs, option.None)
       let lhs_type =
         new_lhs.annotation
         |> adapter.decode_type()
@@ -95,5 +130,10 @@ pub fn typecheck_expr(
         },
       )
     }
+
+    ast.VarExpr(name) ->
+      name
+      |> lookup_variable_type(mapping, _)
+      |> augment_with_type(ast.VarExpr(name), _)
   }
 }

@@ -30,4 +30,5 @@ pub type ExprData(annotation_type) {
   StringLiteral(val: String)
   UnOpExpr(op: UnOp, child: Expr(annotation_type))
   BinOpExpr(op: BinOp, lhs: Expr(annotation_type), rhs: Expr(annotation_type))
+  VarExpr(name: String)
 }
